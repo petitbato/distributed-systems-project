@@ -1,4 +1,4 @@
-# Distributed Systems Project – Milestone 1 (8 October 2025)
+# Distributed Systems Project
 
 ## Objective
 
