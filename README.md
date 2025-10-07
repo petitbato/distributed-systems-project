@@ -1,12 +1,9 @@
-# Scalable Project – Milestone 1 (8 October 2025)
+# Distributed Systems Project – Milestone 1 (8 October 2025)
 
 ## Objective
 
 This project is part of the *Distributed Systems* course.  
-The objective of this first milestone is to deploy a simple web application in a Kubernetes cluster, replicated, and accessible through either:
-
-- an **Ingress Controller**
-
+The objective of this first milestone is to deploy a simple web application in a Kubernetes cluster, replicated, and accessible through an **Ingress Controller**.
 No database or persistent storage is required at this stage.
 
 ## 1. Application Overview
@@ -41,7 +38,7 @@ It simply returns a text message to confirm that the container and cluster setup
 ## 3. Repository Structure
 
 ```
-scalable-project/
+distributed-systems-project/
 │
 ├── app.py
 ├── requirements.txt
@@ -89,20 +86,7 @@ kubectl get svc
 
 ### 4.4 Access the application
 
-#### Option A – Using a NodePort (manual reverse proxy)
-
-1. Retrieve the Minikube IP:
-   ```bash
-   minikube ip
-   ```
-2. Open in a browser:
-   ```
-   http://<minikube-ip>:30080
-   ```
-
-You can also create a local Nginx configuration to redirect requests to this NodePort.
-
-#### Option B – Using an Ingress Controller
+#### Using an Ingress Controller
 
 1. Enable the Minikube ingress addon:
    ```bash
