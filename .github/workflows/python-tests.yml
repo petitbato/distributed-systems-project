@@ -55,12 +55,12 @@ jobs:
       - name: Configure kubectl
         run: |
           mkdir -p $HOME/.kube
-          cat << EOF > $HOME/.kube/config
+          cat > $HOME/.kube/config << EOF
           apiVersion: v1
           clusters:
           - cluster:
-              certificate-authority-data: ${{ secrets.MINIKUBE_CA_CERT }}
-              server: ${{ secrets.MINIKUBE_SERVER }}
+              certificate-authority-data: "${{ secrets.MINIKUBE_CA_CERT }}"
+              server: "${{ secrets.MINIKUBE_SERVER }}"
             name: minikube
           contexts:
           - context:
@@ -73,10 +73,11 @@ jobs:
           users:
           - name: minikube
             user:
-              client-certificate-data: ${{ secrets.MINIKUBE_CLIENT_CERT }}
-              client-key-data: ${{ secrets.MINIKUBE_CLIENT_KEY }}
+              client-certificate-data: "${{ secrets.MINIKUBE_CLIENT_CERT }}"
+              client-key-data: "${{ secrets.MINIKUBE_CLIENT_KEY }}"
           EOF
           chmod 600 $HOME/.kube/config
+          cat $HOME/.kube/config  # Pour déboguer le contenu du fichier
       
       - name: Update Kubernetes deployment
         run: |
