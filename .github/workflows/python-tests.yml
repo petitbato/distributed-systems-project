@@ -55,11 +55,17 @@ jobs:
       - name: Configure kubectl
         run: |
           mkdir -p $HOME/.kube
+          
+          # Nettoyage des données base64 pour s'assurer qu'elles sont valides
+          CA_CERT=$(echo -n "${{ secrets.MINIKUBE_CA_CERT }}" | tr -d '\n\r\t ')
+          CLIENT_CERT=$(echo -n "${{ secrets.MINIKUBE_CLIENT_CERT }}" | tr -d '\n\r\t ')
+          CLIENT_KEY=$(echo -n "${{ secrets.MINIKUBE_CLIENT_KEY }}" | tr -d '\n\r\t ')
+          
           cat > $HOME/.kube/config << EOF
           apiVersion: v1
           clusters:
           - cluster:
-              certificate-authority-data: "${{ secrets.MINIKUBE_CA_CERT }}"
+              certificate-authority-data: "${CA_CERT}"
               server: "${{ secrets.MINIKUBE_SERVER }}"
             name: minikube
           contexts:
@@ -73,8 +79,8 @@ jobs:
           users:
           - name: minikube
             user:
-              client-certificate-data: "${{ secrets.MINIKUBE_CLIENT_CERT }}"
-              client-key-data: "${{ secrets.MINIKUBE_CLIENT_KEY }}"
+              client-certificate-data: "${CLIENT_CERT}"
+              client-key-data: "${CLIENT_KEY}"
           EOF
           chmod 600 $HOME/.kube/config
           cat $HOME/.kube/config  # Pour déboguer le contenu du fichier
