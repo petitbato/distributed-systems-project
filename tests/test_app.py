@@ -13,4 +13,4 @@ def test_home_route(client):
     """Test que la route / renvoie bien le message attendu"""
     response = client.get('/')
     assert response.status_code == 200
-    assert response.data == b"Hello from Kubernetes"
+    assert response.data == b"Hello from Kubernetes Pod!"
