@@ -55,7 +55,27 @@ jobs:
       - name: Configure kubectl
         run: |
           mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBE_CONFIG }}" > $HOME/.kube/config
+          cat << EOF > $HOME/.kube/config
+          apiVersion: v1
+          clusters:
+          - cluster:
+              certificate-authority-data: ${{ secrets.MINIKUBE_CA_CERT }}
+              server: ${{ secrets.MINIKUBE_SERVER }}
+            name: minikube
+          contexts:
+          - context:
+              cluster: minikube
+              user: minikube
+            name: minikube
+          current-context: minikube
+          kind: Config
+          preferences: {}
+          users:
+          - name: minikube
+            user:
+              client-certificate-data: ${{ secrets.MINIKUBE_CLIENT_CERT }}
+              client-key-data: ${{ secrets.MINIKUBE_CLIENT_KEY }}
+          EOF
           chmod 600 $HOME/.kube/config
       
       - name: Update Kubernetes deployment
