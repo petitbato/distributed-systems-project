@@ -1,0 +1,183 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: image-watcher-sa
+  namespace: test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: image-watcher-role
+  namespace: test
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get","list","patch","update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list","get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: image-watcher-rb
+  namespace: test
+subjects:
+  - kind: ServiceAccount
+    name: image-watcher-sa
+    namespace: test
+roleRef:
+  kind: Role
+  name: image-watcher-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: image-watcher-script
+  namespace: test
+data:
+  watch.sh: |
+    #!/usr/bin/env sh
+    set -euf
+
+    : "${DOCKERHUB_OWNER:?missing}"
+    : "${DOCKERHUB_REPO:?missing}"
+    : "${IMAGE_TAG:?missing}"
+    : "${DEPLOYMENT_NAME:?missing}"
+    : "${CONTAINER_NAME:?missing}"
+    : "${NAMESPACE:?missing}"
+
+    REPO_PATH="${DOCKERHUB_OWNER}/${DOCKERHUB_REPO}"
+
+    get_token() {
+      # Public repo: pas besoin d'auth aux manifests, mais on demande un token anonyme
+      # Privé: fournir DOCKERHUB_USERNAME / DOCKERHUB_PASSWORD
+      if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_PASSWORD:-}" ]; then
+        curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO_PATH}:pull" \
+          -u "${DOCKERHUB_USERNAME}:${DOCKERHUB_PASSWORD}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+      else
+        curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO_PATH}:pull" \
+          | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+      fi
+    }
+
+    get_remote_digest() {
+      TOKEN="$(get_token)"
+      # On demande le manifest v2 pour avoir Docker-Content-Digest
+      curl -fsSLI -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "https://registry-1.docker.io/v2/${REPO_PATH}/manifests/${IMAGE_TAG}" \
+        | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' | tr -d '\r'
+    }
+
+    get_current_annotation() {
+      kubectl -n "${NAMESPACE}" get deploy "${DEPLOYMENT_NAME}" -o jsonpath='{.metadata.annotations.imageDigest}' 2>/dev/null || true
+    }
+
+    annotate_and_restart() {
+      NEW="$1"
+      # Met l’annotation à jour (créée si absente)
+      kubectl -n "${NAMESPACE}" annotate deploy "${DEPLOYMENT_NAME}" imageDigest="${NEW}" --overwrite
+      # Redémarre pour forcer un nouveau pull
+      kubectl -n "${NAMESPACE}" rollout restart deploy "${DEPLOYMENT_NAME}"
+      kubectl -n "${NAMESPACE}" rollout status deploy "${DEPLOYMENT_NAME}" --timeout=180s
+    }
+
+    echo "[watcher] Checking ${REPO_PATH}:${IMAGE_TAG} for deployment ${NAMESPACE}/${DEPLOYMENT_NAME}"
+
+    REMOTE_DIGEST="$(get_remote_digest || true)"
+    if [ -z "${REMOTE_DIGEST}" ]; then
+      echo "[watcher] Cannot obtain remote digest from Docker Hub"
+      exit 0
+    fi
+
+    CURRENT_ANN="$(get_current_annotation || true)"
+
+    echo "[watcher] Remote digest:  ${REMOTE_DIGEST}"
+    echo "[watcher] Current annot.: ${CURRENT_ANN:-<none>}"
+
+    if [ -z "${CURRENT_ANN:-}" ]; then
+      echo "[watcher] No stored digest. Annotating and restarting…"
+      annotate_and_restart "${REMOTE_DIGEST}"
+      exit 0
+    fi
+
+    if [ "${CURRENT_ANN}" != "${REMOTE_DIGEST}" ]; then
+      echo "[watcher] Digest changed. Rolling out new version…"
+      annotate_and_restart "${REMOTE_DIGEST}"
+    else
+      echo "[watcher] Up-to-date. Nothing to do."
+    fi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: image-watcher
+  namespace: test
+spec:
+  # Vérifie toutes les 15 minutes (CRON "*/15 * * * *")
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: image-watcher-sa
+          restartPolicy: OnFailure
+          containers:
+            - name: watcher
+              # Alpine léger + kubectl + curl installés à la volée
+              image: alpine:3.20
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: DOCKERHUB_OWNER
+                  value: "<owner-dockerhub>"         # ex: "petitbato" ou org
+                - name: DOCKERHUB_REPO
+                  value: "distributed-systems-project"
+                - name: IMAGE_TAG
+                  value: "latest"                     # ou "dev", etc.
+                - name: DEPLOYMENT_NAME
+                  value: "scalable-app"
+                - name: CONTAINER_NAME
+                  value: "scalable-app"
+                - name: NAMESPACE
+                  value: "test"
+                # Dé-commente si repo privé:
+                # - name: DOCKERHUB_USERNAME
+                #   valueFrom:
+                #     secretKeyRef:
+                #       name: dockerhub-cred
+                #       key: username
+                # - name: DOCKERHUB_PASSWORD
+                #   valueFrom:
+                #     secretKeyRef:
+                #       name: dockerhub-cred
+                #       key: password
+              volumeMounts:
+                - name: script
+                  mountPath: /opt/script
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl bash ca-certificates >/dev/null
+                  # Installe kubectl (version stable)
+                  KUBECTL_VER=$(curl -fsSL https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+                  curl -fsSL -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VER}/bin/linux/amd64/kubectl
+                  chmod +x /usr/local/bin/kubectl
+                  chmod +x /opt/script/watch.sh
+                  /opt/script/watch.sh
+          volumes:
+            - name: script
+              configMap:
+                name: image-watcher-script
+                defaultMode: 0755
