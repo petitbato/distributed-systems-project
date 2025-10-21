@@ -84,14 +84,3 @@ jobs:
           EOF
           chmod 600 $HOME/.kube/config
           cat $HOME/.kube/config  # Pour déboguer le contenu du fichier
-      
-      - name: Update Kubernetes deployment
-        run: |
-          # Update the image in deployment.yaml
-          sed -i 's|image: scalable-app:latest|image: ${{ secrets.DOCKER_USERNAME }}/scalable-app:latest|' k8s/deployment.yaml
-          
-          # Apply the updated deployment
-          kubectl apply -f k8s/deployment.yaml
-          
-          # Rollout the deployment to use the new image
-          kubectl rollout restart deployment scalable-app -n default
