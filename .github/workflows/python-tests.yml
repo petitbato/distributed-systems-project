@@ -47,7 +47,9 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/scalable-app:latest
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/scalable-app:latest
+            ${{ secrets.DOCKER_USERNAME }}/scalable-app:build-${{ github.run_number }}
       
       - name: Set up kubectl
         uses: azure/setup-kubectl@v1
