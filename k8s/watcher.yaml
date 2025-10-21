@@ -17,10 +17,10 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get","list","patch","update"]
+    verbs: ["get", "list", "patch", "update"]
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["list","get"]
+    verbs: ["list", "get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -48,69 +48,79 @@ data:
 
     : "${DOCKERHUB_OWNER:?missing}"
     : "${DOCKERHUB_REPO:?missing}"
-    : "${IMAGE_TAG:?missing}"
     : "${DEPLOYMENT_NAME:?missing}"
-    : "${CONTAINER_NAME:?missing}"
+    : "${CONTAINER_NAME:?missing}" # This is now required
     : "${NAMESPACE:?missing}"
 
     REPO_PATH="${DOCKERHUB_OWNER}/${DOCKERHUB_REPO}"
+    # Note: IMAGE_TAG env var is no longer used, as we search for the tag.
 
     get_token() {
-      # Public repo: pas besoin d'auth aux manifests, mais on demande un token anonyme
-      # Privé: fournir DOCKERHUB_USERNAME / DOCKERHUB_PASSWORD
       if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_PASSWORD:-}" ]; then
         curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO_PATH}:pull" \
-          -u "${DOCKERHUB_USERNAME}:${DOCKERHUB_PASSWORD}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+          -u "${DOCKERHUB_USERNAME}:${DOCKERHUB_PASSWORD}" | jq -r '.token'
       else
         curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO_PATH}:pull" \
-          | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+          | jq -r '.token'
       fi
     }
 
-    get_remote_digest() {
+    # NEW FUNCTION
+    get_latest_numeric_tag() {
       TOKEN="$(get_token)"
-      # On demande le manifest v2 pour avoir Docker-Content-Digest
-      curl -fsSLI -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+      # Get all tags, filter for numbers-only, sort numerically (reverse), pick the top one.
+      # This does NOT handle pagination. If you have >100 tags, this will fail.
+      curl -fsSL -H "Accept: application/json" \
         -H "Authorization: Bearer ${TOKEN}" \
-        "https://registry-1.docker.io/v2/${REPO_PATH}/manifests/${IMAGE_TAG}" \
-        | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' | tr -d '\r'
+        "https://registry-1.docker.io/v2/${REPO_PATH}/tags/list" \
+        | jq -r '.tags[]' | grep -E '^[0-9]+$' | sort -nr | head -n 1
     }
 
-    get_current_annotation() {
-      kubectl -n "${NAMESPACE}" get deploy "${DEPLOYMENT_NAME}" -o jsonpath='{.metadata.annotations.imageDigest}' 2>/dev/null || true
+    get_current_version() {
+      # Get the version we stored, default to "0" if it's not set
+      kubectl -n "${NAMESPACE}" get deploy "${DEPLOYMENT_NAME}" \
+        -o jsonpath='{.metadata.annotations.imageVersion}' 2>/dev/null || echo "0"
     }
 
-    annotate_and_restart() {
-      NEW="$1"
-      # Met l’annotation à jour (créée si absente)
-      kubectl -n "${NAMESPACE}" annotate deploy "${DEPLOYMENT_NAME}" imageDigest="${NEW}" --overwrite
-      # Redémarre pour forcer un nouveau pull
-      kubectl -n "${NAMESPACE}" rollout restart deploy "${DEPLOYMENT_NAME}"
+    # MODIFIED FUNCTION
+    update_deployment() {
+      NEW_VERSION="$1"
+      NEW_IMAGE="${REPO_PATH}:${NEW_VERSION}"
+
+      echo "[watcher] Patching deployment image to ${NEW_IMAGE}"
+      
+      # 1. Patch the deployment's container image directly
+      # This uses CONTAINER_NAME to target the right container in the pod
+      kubectl -n "${NAMESPACE}" patch deploy "${DEPLOYMENT_NAME}" \
+        --type='json' \
+        -p="[{\"op\": \"replace\", \"path\": \"/spec/template/spec/containers(name==${CONTAINER_NAME})/image\", \"value\": \"${NEW_IMAGE}\"}]"
+
+      # 2. Annotate the deployment with the new version so we don't re-deploy
+      kubectl -n "${NAMESPACE}" annotate deploy "${DEPLOYMENT_NAME}" \
+        imageVersion="${NEW_VERSION}" --overwrite
+
+      # 3. Wait for the rollout to complete (this is good practice)
+      echo "[watcher] Waiting for rollout to complete..."
       kubectl -n "${NAMESPACE}" rollout status deploy "${DEPLOYMENT_NAME}" --timeout=180s
     }
 
-    echo "[watcher] Checking ${REPO_PATH}:${IMAGE_TAG} for deployment ${NAMESPACE}/${DEPLOYMENT_NAME}"
+    echo "[watcher] Checking for new numeric tags on ${REPO_PATH} for ${NAMESPACE}/${DEPLOYMENT_NAME}"
 
-    REMOTE_DIGEST="$(get_remote_digest || true)"
-    if [ -z "${REMOTE_DIGEST}" ]; then
-      echo "[watcher] Cannot obtain remote digest from Docker Hub"
+    LATEST_REMOTE_TAG="$(get_latest_numeric_tag || true)"
+    if [ -z "${LATEST_REMOTE_TAG}" ]; then
+      echo "[watcher] Could not find any remote numeric tags."
       exit 0
     fi
 
-    CURRENT_ANN="$(get_current_annotation || true)"
+    CURRENT_LOCAL_VERSION="$(get_current_version || true)"
 
-    echo "[watcher] Remote digest:  ${REMOTE_DIGEST}"
-    echo "[watcher] Current annot.: ${CURRENT_ANN:-<none>}"
+    echo "[watcher] Remote latest version: ${LATEST_REMOTE_TAG}"
+    echo "[watcher] Current version:       ${CURRENT_LOCAL_VERSION}"
 
-    if [ -z "${CURRENT_ANN:-}" ]; then
-      echo "[watcher] No stored digest. Annotating and restarting…"
-      annotate_and_restart "${REMOTE_DIGEST}"
-      exit 0
-    fi
-
-    if [ "${CURRENT_ANN}" != "${REMOTE_DIGEST}" ]; then
-      echo "[watcher] Digest changed. Rolling out new version…"
-      annotate_and_restart "${REMOTE_DIGEST}"
+    # Use 'gt' (greater than) for numeric comparison
+    if [ "${LATEST_REMOTE_TAG}" -gt "${CURRENT_LOCAL_VERSION}" ]; then
+      echo "[watcher] New version found. Updating deployment..."
+      update_deployment "${LATEST_REMOTE_TAG}"
     else
       echo "[watcher] Up-to-date. Nothing to do."
     fi
@@ -121,7 +131,6 @@ metadata:
   name: image-watcher
   namespace: test
 spec:
-  # Vérifie toutes les 15 minutes (CRON "*/15 * * * *")
   schedule: "* * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
@@ -134,19 +143,16 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: watcher
-              # Alpine léger + kubectl + curl installés à la volée
               image: alpine:3.20
               imagePullPolicy: IfNotPresent
               env:
                 - name: DOCKERHUB_OWNER
-                  value: "<owner-dockerhub>"         # ex: "petitbato" ou org
+                  value: "najsv98"
                 - name: DOCKERHUB_REPO
-                  value: "distributed-systems-project"
-                - name: IMAGE_TAG
-                  value: "latest"                     # ou "dev", etc.
+                  value: "scalable-app"
                 - name: DEPLOYMENT_NAME
                   value: "scalable-app"
-                - name: CONTAINER_NAME
+                - name: CONTAINER_NAME # <-- CRITICAL. Must match the container name in your deployment.
                   value: "scalable-app"
                 - name: NAMESPACE
                   value: "test"
@@ -169,11 +175,15 @@ spec:
                 - -c
                 - |
                   set -e
-                  apk add --no-cache curl bash ca-certificates >/dev/null
-                  # Installe kubectl (version stable)
+                  # Add 'jq' for JSON parsing
+                  apk add --no-cache curl bash ca-certificates jq >/dev/null
+                  
+                  # Installe kubectl
                   KUBECTL_VER=$(curl -fsSL https://storage.googleapis.com/kubernetes-release/release/stable.txt)
                   curl -fsSL -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VER}/bin/linux/amd64/kubectl
                   chmod +x /usr/local/bin/kubectl
+                  
+                  # This chmod is redundant if defaultMode is 0755, but safe
                   chmod +x /opt/script/watch.sh
                   /opt/script/watch.sh
           volumes:

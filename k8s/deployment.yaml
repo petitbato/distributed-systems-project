@@ -2,8 +2,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: scalable-app
+  namespace: test # <-- ADDED
   labels:
     app: scalable-app
+  annotations:
+    imageVersion: "1" # <-- ADDED: Sets the baseline version
 spec:
   replicas: 2
   selector:
@@ -16,7 +19,7 @@ spec:
     spec:
       containers:
       - name: scalable-app
-        image: scalable-app:latest
-        imagePullPolicy: IfNotPresent
+        image: najsv98/scalable-app:1 # <-- CHANGED: Use a valid, numeric baseline image
+        imagePullPolicy: IfNotPresent # This is fine, new tags will trigger a pull
         ports:
         - containerPort: 5000
