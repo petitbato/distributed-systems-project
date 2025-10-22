@@ -49,11 +49,10 @@ data:
     : "${DOCKERHUB_OWNER:?missing}"
     : "${DOCKERHUB_REPO:?missing}"
     : "${DEPLOYMENT_NAME:?missing}"
-    : "${CONTAINER_NAME:?missing}" # This is now required
+    : "${CONTAINER_NAME:?missing}"
     : "${NAMESPACE:?missing}"
 
     REPO_PATH="${DOCKERHUB_OWNER}/${DOCKERHUB_REPO}"
-    # Note: IMAGE_TAG env var is no longer used, as we search for the tag.
 
     get_token() {
       if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_PASSWORD:-}" ]; then
@@ -65,60 +64,63 @@ data:
       fi
     }
 
-    # NEW FUNCTION
-    get_latest_numeric_tag() {
+    # MODIFIED: Look for 'build-123' style tags
+    get_latest_build_tag() {
       TOKEN="$(get_token)"
-      # Get all tags, filter for numbers-only, sort numerically (reverse), pick the top one.
-      # This does NOT handle pagination. If you have >100 tags, this will fail.
+      # 1. Get all tags
+      # 2. Grep for 'build-' followed by numbers
+      # 3. Sort on the 2nd field (k2), using '-' as delimiter (t-), numerically (n), reversed (r)
+      # 4. Grab the top one
       curl -fsSL -H "Accept: application/json" \
         -H "Authorization: Bearer ${TOKEN}" \
         "https://registry-1.docker.io/v2/${REPO_PATH}/tags/list" \
-        | jq -r '.tags[]' | grep -E '^[0-9]+$' | sort -nr | head -n 1
+        | jq -r '.tags[]' | grep -E '^build-[0-9]+$' | sort -t- -k2 -nr | head -n 1
     }
 
-    get_current_version() {
-      # Get the version we stored, default to "0" if it's not set
+    # MODIFIED: Default to 'build-0' for a common baseline
+    get_current_tag_from_annotation() {
       kubectl -n "${NAMESPACE}" get deploy "${DEPLOYMENT_NAME}" \
-        -o jsonpath='{.metadata.annotations.imageVersion}' 2>/dev/null || echo "0"
+        -o jsonpath='{.metadata.annotations.imageVersion}' 2>/dev/null || echo "build-0"
     }
 
-    # MODIFIED FUNCTION
     update_deployment() {
-      NEW_VERSION="$1"
-      NEW_IMAGE="${REPO_PATH}:${NEW_VERSION}"
+      NEW_TAG="$1" # e.g., "build-124"
+      NEW_IMAGE="${REPO_PATH}:${NEW_TAG}"
 
       echo "[watcher] Patching deployment image to ${NEW_IMAGE}"
       
-      # 1. Patch the deployment's container image directly
-      # This uses CONTAINER_NAME to target the right container in the pod
+      # 1. Patch the deployment's container image (your JSON patch was correct)
       kubectl -n "${NAMESPACE}" patch deploy "${DEPLOYMENT_NAME}" \
         --type='json' \
         -p="[{\"op\": \"replace\", \"path\": \"/spec/template/spec/containers(name==${CONTAINER_NAME})/image\", \"value\": \"${NEW_IMAGE}\"}]"
 
-      # 2. Annotate the deployment with the new version so we don't re-deploy
+      # 2. Annotate the deployment with the new *full tag*
       kubectl -n "${NAMESPACE}" annotate deploy "${DEPLOYMENT_NAME}" \
-        imageVersion="${NEW_VERSION}" --overwrite
+        imageVersion="${NEW_TAG}" --overwrite
 
-      # 3. Wait for the rollout to complete (this is good practice)
       echo "[watcher] Waiting for rollout to complete..."
       kubectl -n "${NAMESPACE}" rollout status deploy "${DEPLOYMENT_NAME}" --timeout=180s
     }
 
-    echo "[watcher] Checking for new numeric tags on ${REPO_PATH} for ${NAMESPACE}/${DEPLOYMENT_NAME}"
+    echo "[watcher] Checking for new 'build-' tags on ${REPO_PATH} for ${NAMESPACE}/${DEPLOYMENT_NAME}"
 
-    LATEST_REMOTE_TAG="$(get_latest_numeric_tag || true)"
+    LATEST_REMOTE_TAG="$(get_latest_build_tag || true)"
     if [ -z "${LATEST_REMOTE_TAG}" ]; then
-      echo "[watcher] Could not find any remote numeric tags."
+      echo "[watcher] Could not find any remote 'build-' tags."
       exit 0
     fi
 
-    CURRENT_LOCAL_VERSION="$(get_current_version || true)"
+    CURRENT_LOCAL_TAG="$(get_current_tag_from_annotation || true)"
 
-    echo "[watcher] Remote latest version: ${LATEST_REMOTE_TAG}"
-    echo "[watcher] Current version:       ${CURRENT_LOCAL_VERSION}"
+    echo "[watcher] Remote latest tag: ${LATEST_REMOTE_TAG}"
+    echo "[watcher] Current tag:       ${CURRENT_LOCAL_TAG}"
+
+    # MODIFIED: Extract numbers for comparison
+    LATEST_REMOTE_NUM=$(echo "${LATEST_REMOTE_TAG}" | cut -d'-' -f2)
+    CURRENT_LOCAL_NUM=$(echo "${CURRENT_LOCAL_TAG}" | cut -d'-' -f2)
 
     # Use 'gt' (greater than) for numeric comparison
-    if [ "${LATEST_REMOTE_TAG}" -gt "${CURRENT_LOCAL_VERSION}" ]; then
+    if [ "${LATEST_REMOTE_NUM}" -gt "${CURRENT_LOCAL_NUM}" ]; then
       echo "[watcher] New version found. Updating deployment..."
       update_deployment "${LATEST_REMOTE_TAG}"
     else
@@ -184,7 +186,6 @@ spec:
                   chmod +x /usr/local/bin/kubectl
                   
                   # This chmod is redundant if defaultMode is 0755, but safe
-                  chmod +x /opt/script/watch.sh
                   /opt/script/watch.sh
           volumes:
             - name: script
