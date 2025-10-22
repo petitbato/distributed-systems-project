@@ -83,18 +83,19 @@ data:
         -o jsonpath='{.metadata.annotations.imageVersion}' 2>/dev/null || echo "build-0"
     }
 
+    # MODIFIED: Use 'kubectl set image' which is simpler and correct
     update_deployment() {
-      NEW_TAG="$1" # e.g., "build-124"
+      NEW_TAG="$1" # e.g., "build-12"
       NEW_IMAGE="${REPO_PATH}:${NEW_TAG}"
 
       echo "[watcher] Patching deployment image to ${NEW_IMAGE}"
       
-      # 1. Patch the deployment's container image (your JSON patch was correct)
-      kubectl -n "${NAMESPACE}" patch deploy "${DEPLOYMENT_NAME}" \
-        --type='json' \
-        -p="[{\"op\": \"replace\", \"path\": \"/spec/template/spec/containers(name==${CONTAINER_NAME})/image\", \"value\": \"${NEW_IMAGE}\"}]"
-
-      # 2. Annotate the deployment with the new *full tag*
+      # 1. Use 'set image' - this is the correct command for this job.
+      # Format: kubectl set image deployment/<name> <container-name>=<new-image>
+      kubectl -n "${NAMESPACE}" set image deployment/"${DEPLOYMENT_NAME}" \
+        "${CONTAINER_NAME}=${NEW_IMAGE}"
+      
+      # 2. Annotate the deployment with the new full tag
       kubectl -n "${NAMESPACE}" annotate deploy "${DEPLOYMENT_NAME}" \
         imageVersion="${NEW_TAG}" --overwrite
 
