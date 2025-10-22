@@ -1,15 +1,16 @@
+# service.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: scalable-app-service
-  namespace: test # <-- ADDED
+  namespace: test
   labels:
     app: scalable-app
 spec:
+  type: LoadBalancer   # <-- THIS IS THE FIX
   selector:
-    app: scalable-app
+    app: scalable-app # <-- Correctly matches your deployment's pods
   ports:
   - name: http
-    port: 80
-    targetPort: 5000
-  type: ClusterIP
+    port: 80            # The service will be available on port 80...
+    targetPort: 5000    # ...and will forward traffic to port 5000 on your pods
