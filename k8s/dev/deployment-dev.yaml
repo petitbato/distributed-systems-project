@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scalable-app-dev
+  namespace: test # You can keep it in the test namespace, it's fine
+  labels:
+    app: scalable-app-dev # <-- 1. Unique label
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scalable-app-dev
+  template:
+    metadata:
+      labels:
+        app: scalable-app-dev # <-- 1. Must match the selector
+    spec:
+      containers:
+      - name: scalable-app
+        image: najsv98/scalable-app:build-17 # Base image, doesn't matter which
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+        env:
+        - name: FLASK_DEBUG # <-- 2. Enable hot-reload
+          value: "1"
+        command: ["flask", "run", "--host=0.0.0.0", "--port=5000"] # <-- 2. Run debug server
+        volumeMounts:
+        - name: dev-code
+          mountPath: /app # <-- 3. Path to code *inside* the container (your WORKDIR)
+      volumes:
+      - name: dev-code
+        hostPath:
+          path: /data/my-project # <-- 3. Path *inside* the Minikube VM
+          type: Directory
