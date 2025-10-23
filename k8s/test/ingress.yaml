@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scalable-app-ingress
+  namespace: test
+  annotations:
+    # This annotation is often needed for NGINX controllers
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  # Replace "nginx" with your actual ingressClassName
+  ingressClassName: nginx 
+  rules:
+  - host: "test.scalable-app.local"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            # This must match your service name and port
+            name: scalable-app-service
+            port:
+              number: 80

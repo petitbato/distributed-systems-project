@@ -247,3 +247,96 @@ You are now set up:
   * Modify any `.py` file and save it.
   * The Flask server in the pod (streaming logs in Terminal 2, if `port-forward` is verbose) will detect the change and restart.
   * Refresh your browser. Your code changes will be live.
+
+-----
+
+## 8\. Multi-Environment Deployment (Test & Prod)
+
+This project doesn't just run one application; it simulates a multi-environment (Test and Production) setup within the single Minikube cluster. This allows us to validate changes in a 'test' environment before "promoting" a new image to 'prod', all on a local machine.
+
+The `dev` environment (Chapter 7) is for hot-reloading. The `test` and `prod` environments are for simulating a real-world deployment pipeline.
+
+### 8.1 Architecture: Isolated Resources, Shared Entrypoint
+
+The setup relies on **resource isolation** and a **shared ingress controller**:
+
+1.  **Isolated Resources:** Each environment (`test` and `prod`) has its own dedicated set of Kubernetes manifests:
+
+      * `deployment.yaml`
+      * `service.yaml`
+      * `ingress.yaml` 
+
+    This ensures the `prod` pods are separate from the `test` pods, allowing them to run different image versions (e.g., `scalable-app:build-12` for test, `scalable-app:build-20` for prod).
+
+2.  **Shared Ingress Controller:** We use the **single** NGINX Ingress controller (from `minikube addons enable ingress`) as the one and only "front door" for the entire cluster.
+
+3.  **Host-Based Routing:** The controller uses **host-based routing** to differentiate traffic. It inspects the `Host` header of every incoming request:
+
+      * A request for `http://test.scalable-app.local` is routed to the `test` Service.
+      * A request for `http://prod.scalable-app.local` is routed to the `prod` Service.
+
+### 8.2 Production Manifests (What was done)
+
+To create the `prod` environment, we duplicated the `test` manifests and modified their `name` and `host` fields. These files should be placed in a structure like `k8s/prod/`.
+
+### 8.3 Setup for a New Developer
+
+Here is the complete workflow to get *both* the `test` and `prod` environments running.
+
+1.  **Start Minikube:**
+
+    ```bash
+    minikube start
+    ```
+
+2.  **Enable Ingress Addon:**
+
+    ```bash
+    minikube addons enable ingress
+    ```
+
+3.  **Patch Controller Service (One-Time Setup):**
+    For `minikube tunnel` to work correctly on Windows, the controller's service must be `type: LoadBalancer`. Run this command once:
+
+    ```powershell
+    kubectl patch svc ingress-nginx-controller -n ingress-nginx --% -p '{"spec": {"type": "LoadBalancer"}}'
+    ```
+
+4.  **Run the Tunnel (Terminal 1):**
+    Open a **new, dedicated terminal** and run this. It must be left running to maintain the network connection.
+
+    ```bash
+    minikube tunnel
+    ```
+
+5.  **Configure Hosts File:**
+    Edit your `C:\Windows\System32\drivers\etc\hosts` file as an **Administrator**. Add entries pointing *both* hostnames to `127.0.0.1` (which is the `EXTERNAL-IP` assigned by the tunnel on Windows).
+
+    ```
+    127.0.0.1 test.scalable-app.local
+    127.0.0.1 prod.scalable-app.local
+    ```
+
+    (You may need to run `ipconfig /flushdns` after saving).
+
+6.  **Deploy All Applications (Terminal 2):**
+    In your original terminal, apply the manifests for *both* environments.
+
+    ```bash
+    kubectl apply -f k8s/test/
+    kubectl apply -f k8s/prod/
+    ```
+
+### 8.4 Verification
+
+You can now access both environments from your browser:
+
+  * **Test:** `http://test.scalable-app.local` (Routes to `test` pods)
+  * **Prod:** `http://prod.scalable-app.local` (Routes to `prod` pods)
+
+To promote a change, you would build a new image and update the `prod` deployment:
+
+```powershell
+# TODO : vérifier la commande
+kubectl set image deployment/scalable-app-prod-deployment scalable-app=scalable-app:v1.1 -n test
+```
