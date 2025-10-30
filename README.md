@@ -342,5 +342,5 @@ To promote a change, you would build a new image and update the `prod` deploymen
 
 ```powershell
 # TODO : vérifier la commande
-kubectl set image deployment/scalable-app-prod-deployment scalable-app=scalable-app:v1.1 -n test
+kubectl set image deployment/scalable-app scalable-app=najsv98/scalable-app:build-16 -n prod
 ```
