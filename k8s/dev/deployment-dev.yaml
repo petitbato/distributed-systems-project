@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: scalable-app-dev
-  namespace: test # You can keep it in the test namespace, it's fine
+  namespace: dev
   labels:
     app: scalable-app-dev # <-- 1. Unique label
 spec:
