@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>URL Shortener</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        h1 { color: #333; }
+        .endpoint { background: #f4f4f4; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .method { color: #fff; padding: 5px 10px; border-radius: 3px; font-weight: bold; }
+        .get { background: #61affe; }
+        .post { background: #49cc90; }
+        code { background: #e8e8e8; padding: 2px 5px; border-radius: 3px; }
+        .test-btn { background: #4CAF50; color: white; padding: 8px 16px; border: none; 
+                    border-radius: 4px; cursor: pointer; margin-top: 10px; }
+        .test-btn:hover { background: #45a049; }
+        .response { background: #fff; border: 1px solid #ddd; padding: 10px; 
+                    margin-top: 10px; border-radius: 4px; display: none; }
+    </style>
+</head>
+<body>
+    <h1>URL Shortener </h1>
+    <p>Welcome to the API. Here are the available endpoints:</p>
+    
+    <div class="endpoint">
+        <h3><span class="method get">GET</span> /api/message</h3>
+        <p><strong>Description:</strong> Returns a simple message</p>
+        <p><strong>Response:</strong> <code>{"message": "You get me"}</code></p>
+        <button class="test-btn" onclick="testMessage()">Test this endpoint</button>
+        <div id="response-message" class="response"></div>
+    </div>
+
+    <script>
+        async function testMessage() {
+            const responseDiv = document.getElementById('response-message');
+            try {
+                const response = await fetch('/api/message');
+                const data = await response.json();
+                responseDiv.style.display = 'block';
+                responseDiv.innerHTML = `<strong>Response:</strong><br><code>${JSON.stringify(data, null, 2)}</code>`;
+            } catch (error) {
+                responseDiv.style.display = 'block';
+                responseDiv.innerHTML = `<strong>Error:</strong> ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
