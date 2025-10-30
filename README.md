@@ -1,5 +1,9 @@
 # Distributed Systems Project
 
+## TODO
+- Expliquer la création de namespace et pourquoi on les utilisent
+  - vérifier les commandes du readme qu'elles soient dans le bon namespace
+
 ## Objective
 
 This project is part of the *Distributed Systems* course.  
